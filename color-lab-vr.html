@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Лабораторія кольорів – Pico 4</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #16222e; font-family: system-ui, sans-serif; color: #e6f4f1; }
+  #info {
+    position: absolute; top: 12px; left: 12px; max-width: 380px;
+    padding: 14px 18px; background: rgba(22, 34, 46, 0.85);
+    border-left: 4px solid #2bb5a3; border-radius: 6px;
+    font-size: 14px; line-height: 1.5;
+  }
+  #info h1 { margin: 0 0 6px; font-size: 18px; }
+  #info p { margin: 4px 0; }
+  /* Wider buttons for the Ukrainian labels */
+  #VRButton, #ARButton {
+    width: auto !important; left: 50% !important; transform: translateX(-50%);
+    padding: 12px 20px !important; white-space: nowrap;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="info">
+  <h1>Лабораторія кольорів</h1>
+  <p>Натисни <b>Змішана реальність</b>, щоб поставити лабораторний стіл у своїй кімнаті, або <b>Увійти у VR</b> для віртуальної кімнати.</p>
+  <p>Курок або бокова кнопка: візьми колбу. Нахили її над іншою колбою, щоб перелити рідину і змішати кольори.</p>
+  <p>Вилий рідину на стіл або підлогу, щоб спорожнити колбу.</p>
+  <p>Кнопка A / X: знову наповнити всі колби і почати спочатку.</p>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- Scene ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x16222e);
+scene.fog = new THREE.Fog(0x16222e, 6, 20);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 50);
+camera.position.set(0, 1.4, 0.6);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const arButton = ARButton.createButton(renderer, { requiredFeatures: ['local-floor'] });
+arButton.style.bottom = '80px';
+document.body.appendChild(arButton);
+const vrButton = VRButton.createButton(renderer);
+document.body.appendChild(vrButton);
+
+// Translate the WebXR button texts into Ukrainian
+const BUTTON_TEXT = {
+  'START AR': 'ЗМІШАНА РЕАЛЬНІСТЬ', 'STOP AR': 'ВИЙТИ',
+  'ENTER VR': 'УВІЙТИ У VR', 'EXIT VR': 'ВИЙТИ З VR',
+  'AR NOT SUPPORTED': 'AR НЕ ПІДТРИМУЄТЬСЯ', 'VR NOT SUPPORTED': 'VR НЕ ПІДТРИМУЄТЬСЯ',
+  'AR NOT ALLOWED': 'AR НЕ ДОЗВОЛЕНО', 'VR NOT ALLOWED': 'VR НЕ ДОЗВОЛЕНО',
+  'WEBXR NEEDS HTTPS': 'ПОТРІБЕН HTTPS', 'WEBXR NOT AVAILABLE': 'WEBXR НЕДОСТУПНИЙ'
+};
+for (const btn of [arButton, vrButton]) {
+  const translate = () => {
+    const t = BUTTON_TEXT[btn.textContent.trim()];
+    if (t) btn.textContent = t;
+  };
+  new MutationObserver(translate).observe(btn, { childList: true, characterData: true, subtree: true });
+  translate();
+}
+
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.target.set(0, 0.85, -0.7);
+orbit.update();
+
+// ---------- Lights ----------
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.4));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(1.5, 4, 1);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -3; sun.shadow.camera.right = 3;
+sun.shadow.camera.top = 3; sun.shadow.camera.bottom = -3;
+scene.add(sun);
+
+// ---------- Floor (virtual in VR, invisible shadow catcher in AR) ----------
+const vrFloorMat = new THREE.MeshStandardMaterial({ color: 0x24394a, roughness: 0.95 });
+const arFloorMat = new THREE.ShadowMaterial({ opacity: 0.35 });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), vrFloorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+const grid = new THREE.GridHelper(40, 40, 0x2bb5a3, 0x2f4a5c);
+grid.position.y = 0.002;
+scene.add(grid);
+
+const vrBackground = scene.background;
+const vrFog = scene.fog;
+function setMixedReality(on) {
+  scene.background = on ? null : vrBackground;
+  scene.fog = on ? null : vrFog;
+  grid.visible = !on;
+  floor.material = on ? arFloorMat : vrFloorMat;
+}
+renderer.xr.addEventListener('sessionstart', () => {
+  setMixedReality(renderer.xr.getSession().environmentBlendMode !== 'opaque');
+});
+renderer.xr.addEventListener('sessionend', () => setMixedReality(false));
+
+// ---------- Lab table ----------
+const TABLE = { x: 0, z: -0.7, w: 1.4, d: 0.7, top: 0.8 };
+const tableMat = new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.6 });
+const legMat = new THREE.MeshStandardMaterial({ color: 0x2f4858, roughness: 0.5, metalness: 0.4 });
+const tableTop = new THREE.Mesh(new THREE.BoxGeometry(TABLE.w, 0.04, TABLE.d), tableMat);
+tableTop.position.set(TABLE.x, TABLE.top - 0.02, TABLE.z);
+tableTop.castShadow = tableTop.receiveShadow = true;
+scene.add(tableTop);
+for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.04, TABLE.top - 0.04, 0.04), legMat);
+  leg.position.set(TABLE.x + sx * (TABLE.w / 2 - 0.05), (TABLE.top - 0.04) / 2, TABLE.z + sz * (TABLE.d / 2 - 0.05));
+  leg.castShadow = true;
+  scene.add(leg);
+}
+
+// ---------- Paint-like color mixing (RYB model) ----------
+// Each liquid stores an RYB vector: red, yellow, blue amounts.
+// White = [0,0,0], so mixing with white makes colors lighter.
+function lerp(a, b, t) { return a + (b - a) * t; }
+function rybToRgb([r, y, b]) {
+  const c000 = [1, 1, 1], c100 = [1, 0, 0], c010 = [1, 1, 0], c001 = [0.163, 0.373, 0.6];
+  const c110 = [1, 0.5, 0], c101 = [0.5, 0, 0.5], c011 = [0, 0.66, 0.2], c111 = [0.2, 0.094, 0];
+  const out = [];
+  for (let i = 0; i < 3; i++) {
+    const x00 = lerp(c000[i], c100[i], r), x10 = lerp(c010[i], c110[i], r);
+    const x01 = lerp(c001[i], c101[i], r), x11 = lerp(c011[i], c111[i], r);
+    out.push(lerp(lerp(x00, x10, y), lerp(x01, x11, y), b));
+  }
+  return out;
+}
+function mixRyb(a, amountA, b, amountB) {
+  const total = amountA + amountB;
+  const avg = [0, 1, 2].map(i => (a[i] * amountA + b[i] * amountB) / total);
+  const targetMax = (Math.max(...a) * amountA + Math.max(...b) * amountB) / total;
+  const m = Math.max(...avg);
+  return m > 0 ? avg.map(v => v * targetMax / m) : avg;
+}
+
+const NAMED_COLORS = [
+  ['Червоний', [1, 0, 0]], ['Жовтий', [1, 1, 0]], ['Синій', [0.16, 0.37, 0.6]], ['Білий', [1, 1, 1]],
+  ['Помаранчевий', [1, 0.5, 0]], ['Зелений', [0, 0.66, 0.2]], ['Фіолетовий', [0.5, 0, 0.5]],
+  ['Рожевий', [1, 0.55, 0.55]], ['Блакитний', [0.58, 0.69, 0.8]], ['Світло-зелений', [0.5, 0.83, 0.6]],
+  ['Бузковий', [0.75, 0.5, 0.75]], ['Персиковий', [1, 0.75, 0.5]], ['Світло-жовтий', [1, 1, 0.5]],
+  ['Бірюзовий', [0.08, 0.52, 0.42]], ['Салатовий', [0.5, 0.83, 0.1]], ['Червоно-помаранчевий', [1, 0.25, 0]],
+  ['Жовто-помаранчевий', [1, 0.75, 0]], ['Темно-фіолетовий', [0.33, 0.19, 0.55]], ['Пурпуровий', [0.75, 0, 0.25]],
+  ['Коричневий', [0.55, 0.3, 0.1]], ['Оливковий', [0.45, 0.5, 0.1]], ['Темно-коричневий', [0.22, 0.1, 0.02]],
+  ['Сірий', [0.55, 0.55, 0.5]]
+];
+function colorName(rgb) {
+  let best = '', bestD = Infinity;
+  for (const [name, c] of NAMED_COLORS) {
+    const d = (c[0] - rgb[0]) ** 2 + (c[1] - rgb[1]) ** 2 + (c[2] - rgb[2]) ** 2;
+    if (d < bestD) { bestD = d; best = name; }
+  }
+  return best;
+}
+
+// ---------- Flasks ----------
+const R = 0.045, H = 0.2, CAPACITY = 1;
+const flasks = [];
+const pickables = [];
+const flaskGroup = new THREE.Group();
+scene.add(flaskGroup);
+
+const glassGeo = new THREE.CylinderGeometry(R, R, H, 28, 1, true).translate(0, H / 2, 0);
+const bottomGeo = new THREE.CircleGeometry(R, 28).rotateX(-Math.PI / 2).translate(0, 0.002, 0);
+const liquidGeo = new THREE.CylinderGeometry(R * 0.9, R * 0.9, 1, 28).translate(0, 0.5, 0);
+const rimGeo = new THREE.TorusGeometry(R, 0.004, 8, 28).rotateX(Math.PI / 2).translate(0, H, 0);
+
+function makeLabel() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true }));
+  sprite.scale.set(0.16, 0.04, 1);
+  sprite.position.y = H + 0.05;
+  sprite.userData = { canvas, texture, text: null };
+  return sprite;
+}
+function setLabel(sprite, text) {
+  if (sprite.userData.text === text) return;
+  sprite.userData.text = text;
+  const { canvas, texture } = sprite.userData;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 256, 64);
+  ctx.fillStyle = 'rgba(22, 34, 46, 0.85)';
+  ctx.beginPath(); ctx.roundRect(4, 4, 248, 56, 14); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  // Shrink the font so long Ukrainian names still fit on the label
+  let size = 30;
+  do { ctx.font = `bold ${size}px system-ui, sans-serif`; size -= 1; }
+  while (ctx.measureText(text).width > 232 && size > 14);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 34);
+  texture.needsUpdate = true;
+}
+
+function createFlask(position, ryb, level) {
+  const flask = new THREE.Group();
+  flask.position.copy(position);
+
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.22, roughness: 0.05,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  const glass = new THREE.Mesh(glassGeo, glassMat);
+  glass.renderOrder = 2;
+  const bottom = new THREE.Mesh(bottomGeo, glassMat);
+  const rim = new THREE.Mesh(rimGeo, new THREE.MeshStandardMaterial({ color: 0xdfeeee, roughness: 0.2 }));
+
+  const liquid = new THREE.Mesh(liquidGeo, new THREE.MeshStandardMaterial({ roughness: 0.25 }));
+  liquid.position.y = 0.004;
+  liquid.castShadow = true;
+
+  const label = makeLabel();
+  flask.add(liquid, glass, bottom, rim, label);
+  flaskGroup.add(flask);
+
+  glass.userData.flask = flask;
+  pickables.push(glass);
+
+  flask.userData = {
+    ryb: [...ryb], level, held: false, velocityY: 0,
+    liquid, label, glassMat
+  };
+  refreshFlask(flask);
+  flasks.push(flask);
+  return flask;
+}
+
+function refreshFlask(flask) {
+  const d = flask.userData;
+  const empty = d.level < 0.02;
+  d.liquid.visible = !empty;
+  d.liquid.scale.y = Math.max(d.level, 0.001) * H * 0.95;
+  const rgb = rybToRgb(d.ryb);
+  d.liquid.material.color.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
+  setLabel(d.label, empty ? 'Порожньо' : colorName(rgb));
+}
+
+const START_COLORS = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, 0]]; // червоний, жовтий, синій, білий
+
+function resetLab() {
+  for (const c of controllers) { c.userData.held = null; c.userData.stream.visible = false; }
+  for (const f of flasks) f.removeFromParent();
+  flasks.length = 0;
+  pickables.length = 0;
+  START_COLORS.forEach((ryb, i) => {
+    createFlask(new THREE.Vector3(TABLE.x - 0.36 + i * 0.24, TABLE.top, TABLE.z - 0.12), ryb, 0.8);
+  });
+  for (let i = 0; i < 4; i++) {
+    createFlask(new THREE.Vector3(TABLE.x - 0.36 + i * 0.24, TABLE.top, TABLE.z + 0.14), [0, 0, 0], 0);
+  }
+}
+
+// ---------- Gravity for released flasks ----------
+function surfaceAt(x, z, y) {
+  const overTable = Math.abs(x - TABLE.x) < TABLE.w / 2 && Math.abs(z - TABLE.z) < TABLE.d / 2;
+  return overTable && y > TABLE.top - 0.05 ? TABLE.top : 0;
+}
+function updateGravity(dt) {
+  for (const f of flasks) {
+    if (f.userData.held) continue;
+    const surface = surfaceAt(f.position.x, f.position.z, f.position.y);
+    if (f.position.y <= surface + 0.0001 && f.userData.velocityY === 0) continue;
+    f.userData.velocityY -= 9.8 * dt;
+    f.position.y += f.userData.velocityY * dt;
+    if (f.position.y < surface) { f.position.y = surface; f.userData.velocityY = 0; }
+  }
+}
+
+// ---------- Controllers ----------
+const raycaster = new THREE.Raycaster();
+const tempMatrix = new THREE.Matrix4();
+const modelFactory = new XRControllerModelFactory();
+const controllers = [];
+const rayGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]);
+const streamGeo = new THREE.CylinderGeometry(0.006, 0.006, 1, 8).translate(0, -0.5, 0);
+
+for (let i = 0; i < 2; i++) {
+  const controller = renderer.xr.getController(i);
+  controller.userData = { held: null, grabButton: null, hovered: null, gamepad: null, resetPressed: false };
+
+  const line = new THREE.Line(rayGeometry, new THREE.LineBasicMaterial({ color: 0x2bb5a3 }));
+  line.scale.z = 2;
+  controller.add(line);
+  controller.userData.line = line;
+
+  const stream = new THREE.Mesh(streamGeo, new THREE.MeshStandardMaterial({ roughness: 0.2 }));
+  stream.visible = false;
+  scene.add(stream);
+  controller.userData.stream = stream;
+
+  controller.addEventListener('connected', e => { controller.userData.gamepad = e.data.gamepad; });
+  controller.addEventListener('disconnected', () => { controller.userData.gamepad = null; });
+  controller.addEventListener('selectstart', () => grab(controller, 'select'));
+  controller.addEventListener('squeezestart', () => grab(controller, 'squeeze'));
+  controller.addEventListener('selectend', () => release(controller, 'select'));
+  controller.addEventListener('squeezeend', () => release(controller, 'squeeze'));
+  scene.add(controller);
+  controllers.push(controller);
+
+  const grip = renderer.xr.getControllerGrip(i);
+  grip.add(modelFactory.createControllerModel(grip));
+  scene.add(grip);
+}
+
+function pointedFlask(controller) {
+  tempMatrix.identity().extractRotation(controller.matrixWorld);
+  raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+  const hit = raycaster.intersectObjects(pickables, false).find(h => !h.object.userData.flask.userData.held);
+  return hit ? { flask: hit.object.userData.flask, distance: hit.distance } : null;
+}
+
+function grab(controller, button) {
+  if (controller.userData.held) return;
+  const hit = pointedFlask(controller);
+  if (!hit) return;
+  const f = hit.flask;
+  f.userData.held = true;
+  f.userData.velocityY = 0;
+  f.userData.label.visible = false;
+  f.userData.glassMat.opacity = 0.22;
+  controller.attach(f);
+  controller.userData.held = f;
+  controller.userData.grabButton = button;
+}
+
+function release(controller, button) {
+  const f = controller.userData.held;
+  if (!f || controller.userData.grabButton !== button) return;
+  flaskGroup.attach(f);
+  f.rotation.set(0, 0, 0);               // stand the flask upright again
+  f.userData.held = false;
+  f.userData.velocityY = 0.0001;         // wake up gravity
+  f.userData.label.visible = true;
+  controller.userData.held = null;
+  controller.userData.stream.visible = false;
+}
+
+// ---------- Pouring ----------
+const up = new THREE.Vector3(), mouth = new THREE.Vector3(), otherTop = new THREE.Vector3();
+const worldQuat = new THREE.Quaternion();
+
+function updatePouring(controller, dt) {
+  const src = controller.userData.held;
+  const stream = controller.userData.stream;
+  stream.visible = false;
+  if (!src || src.userData.level < 0.02) return;
+
+  src.getWorldQuaternion(worldQuat);
+  up.set(0, 1, 0).applyQuaternion(worldQuat);
+  const threshold = 0.15 + 0.6 * src.userData.level;   // a fuller flask pours sooner
+  if (up.y > threshold) return;
+
+  src.localToWorld(mouth.set(0, H, 0));
+  const amount = Math.min(src.userData.level, THREE.MathUtils.clamp((threshold - up.y) * 1.5, 0.15, 0.8) * dt);
+
+  // Look for an upright flask under the stream
+  let target = null;
+  for (const f of flasks) {
+    if (f === src) continue;
+    f.getWorldQuaternion(worldQuat);
+    if (new THREE.Vector3(0, 1, 0).applyQuaternion(worldQuat).y < 0.7) continue;
+    f.localToWorld(otherTop.set(0, H, 0));
+    const dist = Math.hypot(mouth.x - otherTop.x, mouth.z - otherTop.z);
+    if (dist < R * 1.4 && mouth.y > otherTop.y - 0.02) { target = f; break; }
+  }
+
+  let endY;
+  if (target) {
+    const t = target.userData;
+    const space = CAPACITY - t.level;
+    const poured = Math.min(amount, space);
+    if (poured > 0) {
+      t.ryb = t.level < 0.02 ? [...src.userData.ryb] : mixRyb(t.ryb, t.level, src.userData.ryb, poured);
+      t.level += poured;
+      refreshFlask(target);
+    }
+    const base = new THREE.Vector3();
+    target.getWorldPosition(base);
+    endY = base.y + 0.004 + t.level * H * 0.95;
+  } else {
+    endY = surfaceAt(mouth.x, mouth.z, mouth.y);
+  }
+
+  src.userData.level -= amount;
+  refreshFlask(src);
+
+  const length = mouth.y - endY;
+  if (length > 0.005) {
+    const rgb = rybToRgb(src.userData.ryb);
+    stream.material.color.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
+    stream.position.copy(mouth);
+    stream.scale.y = length;
+    stream.visible = true;
+  }
+
+  const actuator = controller.userData.gamepad?.hapticActuators?.[0];
+  if (actuator?.pulse) actuator.pulse(0.15, 30);
+}
+
+function updateControllers(dt) {
+  for (const c of controllers) {
+    if (c.userData.hovered) { c.userData.hovered.userData.glassMat.opacity = 0.22; c.userData.hovered = null; }
+    if (!c.userData.held) {
+      const hit = pointedFlask(c);
+      if (hit) {
+        hit.flask.userData.glassMat.opacity = 0.5;
+        c.userData.hovered = hit.flask;
+        c.userData.line.scale.z = hit.distance;
+      } else {
+        c.userData.line.scale.z = 2;
+      }
+    } else {
+      c.userData.line.scale.z = 0.05;
+    }
+
+    updatePouring(c, dt);
+
+    // A / X button (index 4 on Pico controllers) refills everything
+    const gp = c.userData.gamepad;
+    const pressed = !!(gp && gp.buttons[4] && gp.buttons[4].pressed);
+    if (pressed && !c.userData.resetPressed) resetLab();
+    c.userData.resetPressed = pressed;
+  }
+}
+
+resetLab();
+
+// ---------- Loop ----------
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (renderer.xr.isPresenting) updateControllers(dt);
+  updateGravity(dt);
+  renderer.render(scene, camera);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
