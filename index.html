@@ -36,6 +36,8 @@
   <p>Курок або бокова кнопка: візьми колбу. Нахили її над іншою колбою, щоб перелити рідину і змішати кольори.</p>
   <p>Вилий рідину на стіл або підлогу, щоб спорожнити колбу.</p>
   <p>Кнопка A / X: знову наповнити всі колби і почати спочатку.</p>
+  <p>Кнопка B / Y: поставити стіл перед собою.</p>
+  <p>Затисни обидва джойстики на 1 секунду: перезавантажити сторінку.</p>
 </div>
 
 <script type="module">
@@ -88,6 +90,11 @@ orbit.target.set(0, 0.85, -0.7);
 orbit.update();
 
 // ---------- Lights ----------
+// Everything on the lab (floor, table, flasks, sun) lives in one group,
+// so the whole lab can be moved in front of the user.
+const lab = new THREE.Group();
+scene.add(lab);
+
 scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.4));
 const sun = new THREE.DirectionalLight(0xffffff, 1.5);
 sun.position.set(1.5, 4, 1);
@@ -95,7 +102,7 @@ sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.camera.left = -3; sun.shadow.camera.right = 3;
 sun.shadow.camera.top = 3; sun.shadow.camera.bottom = -3;
-scene.add(sun);
+lab.add(sun, sun.target);
 
 // ---------- Floor (virtual in VR, invisible shadow catcher in AR) ----------
 const vrFloorMat = new THREE.MeshStandardMaterial({ color: 0x24394a, roughness: 0.95 });
@@ -103,10 +110,10 @@ const arFloorMat = new THREE.ShadowMaterial({ opacity: 0.35 });
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), vrFloorMat);
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
-scene.add(floor);
+lab.add(floor);
 const grid = new THREE.GridHelper(40, 40, 0x2bb5a3, 0x2f4a5c);
 grid.position.y = 0.002;
-scene.add(grid);
+lab.add(grid);
 
 const vrBackground = scene.background;
 const vrFog = scene.fog;
@@ -116,24 +123,40 @@ function setMixedReality(on) {
   grid.visible = !on;
   floor.material = on ? arFloorMat : vrFloorMat;
 }
+let placeLabInFrames = 0;
 renderer.xr.addEventListener('sessionstart', () => {
   setMixedReality(renderer.xr.getSession().environmentBlendMode !== 'opaque');
+  placeLabInFrames = 15; // wait a few frames until the head pose is valid
 });
+
+// Put the table top just below the head (waist height), in front of where the user looks
+const TABLE_BELOW_HEAD = 0.55;
+function placeLab() {
+  const head = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  camera.getWorldPosition(head);
+  camera.getWorldDirection(dir);
+  dir.y = 0;
+  if (dir.lengthSq() < 1e-4) dir.set(0, 0, -1);
+  dir.normalize();
+  lab.rotation.set(0, Math.atan2(-dir.x, -dir.z), 0);
+  lab.position.set(head.x, head.y - TABLE_BELOW_HEAD - TABLE.top, head.z);
+}
 renderer.xr.addEventListener('sessionend', () => setMixedReality(false));
 
 // ---------- Lab table ----------
-const TABLE = { x: 0, z: -0.7, w: 1.4, d: 0.7, top: 0.8 };
+const TABLE = { x: 0, z: -0.55, w: 1.4, d: 0.7, top: 0.8 };
 const tableMat = new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.6 });
 const legMat = new THREE.MeshStandardMaterial({ color: 0x2f4858, roughness: 0.5, metalness: 0.4 });
 const tableTop = new THREE.Mesh(new THREE.BoxGeometry(TABLE.w, 0.04, TABLE.d), tableMat);
 tableTop.position.set(TABLE.x, TABLE.top - 0.02, TABLE.z);
 tableTop.castShadow = tableTop.receiveShadow = true;
-scene.add(tableTop);
+lab.add(tableTop);
 for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
   const leg = new THREE.Mesh(new THREE.BoxGeometry(0.04, TABLE.top - 0.04, 0.04), legMat);
   leg.position.set(TABLE.x + sx * (TABLE.w / 2 - 0.05), (TABLE.top - 0.04) / 2, TABLE.z + sz * (TABLE.d / 2 - 0.05));
   leg.castShadow = true;
-  scene.add(leg);
+  lab.add(leg);
 }
 
 // ---------- Paint-like color mixing (RYB model) ----------
@@ -183,7 +206,7 @@ const R = 0.045, H = 0.2, CAPACITY = 1;
 const flasks = [];
 const pickables = [];
 const flaskGroup = new THREE.Group();
-scene.add(flaskGroup);
+lab.add(flaskGroup);
 
 const glassGeo = new THREE.CylinderGeometry(R, R, H, 28, 1, true).translate(0, H / 2, 0);
 const bottomGeo = new THREE.CircleGeometry(R, 28).rotateX(-Math.PI / 2).translate(0, 0.002, 0);
@@ -303,7 +326,7 @@ const streamGeo = new THREE.CylinderGeometry(0.006, 0.006, 1, 8).translate(0, -0
 
 for (let i = 0; i < 2; i++) {
   const controller = renderer.xr.getController(i);
-  controller.userData = { held: null, grabButton: null, hovered: null, gamepad: null, resetPressed: false };
+  controller.userData = { held: null, grabButton: null, hovered: null, gamepad: null, resetPressed: false, placePressed: false };
 
   const line = new THREE.Line(rayGeometry, new THREE.LineBasicMaterial({ color: 0x2bb5a3 }));
   line.scale.z = 2;
@@ -406,7 +429,8 @@ function updatePouring(controller, dt) {
     target.getWorldPosition(base);
     endY = base.y + 0.004 + t.level * H * 0.95;
   } else {
-    endY = surfaceAt(mouth.x, mouth.z, mouth.y);
+    const local = lab.worldToLocal(mouth.clone());
+    endY = lab.position.y + surfaceAt(local.x, local.z, local.y);
   }
 
   src.userData.level -= amount;
@@ -448,8 +472,28 @@ function updateControllers(dt) {
     const pressed = !!(gp && gp.buttons[4] && gp.buttons[4].pressed);
     if (pressed && !c.userData.resetPressed) resetLab();
     c.userData.resetPressed = pressed;
+
+    // B / Y button (index 5) moves the table in front of you
+    const placePressed = !!(gp && gp.buttons[5] && gp.buttons[5].pressed);
+    if (placePressed && !c.userData.placePressed) placeLab();
+    c.userData.placePressed = placePressed;
+  }
+
+  // Both thumbsticks pressed for 1 second (index 3) reloads the page
+  const bothSticks = controllers.every(c => c.userData.gamepad?.buttons[3]?.pressed);
+  if (bothSticks && !reloading) {
+    reloadHold += dt;
+    for (const c of controllers) c.userData.gamepad?.hapticActuators?.[0]?.pulse?.(0.3, 20);
+    if (reloadHold > 1) {
+      reloading = true;
+      const session = renderer.xr.getSession();
+      (session ? session.end() : Promise.resolve()).finally(() => location.reload());
+    }
+  } else {
+    reloadHold = 0;
   }
 }
+let reloadHold = 0, reloading = false;
 
 resetLab();
 
@@ -457,7 +501,10 @@ resetLab();
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (renderer.xr.isPresenting) updateControllers(dt);
+  if (renderer.xr.isPresenting) {
+    if (placeLabInFrames > 0 && --placeLabInFrames === 0) placeLab();
+    updateControllers(dt);
+  }
   updateGravity(dt);
   renderer.render(scene, camera);
 });
